@@ -3,6 +3,11 @@
 Connects to the CareerLens FastMCP server over Streamable HTTP and lets an LLM
 agent route user requests to the Data, Action, and Orchestration tools.
 
+Human approval: any call that would write to the career plan (save_skill_gap, or
+investigate_job_fit with save_gap=true) pauses the run until the user approves or
+rejects it. Read-only calls never ask. Without an interactive terminal, writes are
+rejected (fail closed).
+
 Usage (start the server first in another terminal: python -m server.mcp_server)
     python agent.py                 interactive chat
     python agent.py "question"      answer a single question and exit
@@ -19,7 +24,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from agents import Agent, ItemHelpers, RunContextWrapper, Runner
-from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
+from agents.items import ToolApprovalItem, ToolCallItem, ToolCallOutputItem
 from agents.mcp import MCPServerStreamableHttp
 
 load_dotenv()
@@ -47,7 +52,12 @@ Reporting:
   the record_id). Never say something was saved unless a tool returned status "saved".
 - If a tool returns an error, tell the user the error message plainly and stop that task.
   Do not retry with guessed IDs; you may list the valid IDs the error provides.
+- Saves require the user's approval. If the user declines, say clearly that nothing was
+  saved and do not try to save it another way.
 """
+
+WRITE_TOOLS = ("save_skill_gap", "investigate_job_fit")
+REJECTION_MESSAGE = "The user declined this save. Nothing was written to the career plan."
 
 
 def show_tool_error(ctx: RunContextWrapper[Any], error: Exception) -> str:
@@ -55,13 +65,42 @@ def show_tool_error(ctx: RunContextWrapper[Any], error: Exception) -> str:
     return f"Tool call failed: {error}"
 
 
+async def _approval_for_orchestration(ctx: RunContextWrapper[Any], args: dict[str, Any], call_id: str) -> bool:
+    """investigate_job_fit only writes when save_gap is true, so only then does it need approval."""
+    return args.get("save_gap") is True
+
+
+def needs_approval_for(tool_name: str) -> Any:
+    """Argument-aware approval policy for one CareerLens tool."""
+    if tool_name == "save_skill_gap":
+        return True
+    if tool_name == "investigate_job_fit":
+        return _approval_for_orchestration
+    return False
+
+
+class CareerLensMCPServer(MCPServerStreamableHttp):
+    """MCP client for CareerLens with an argument-aware human-approval policy.
+
+    The SDK's public require_approval setting decides per tool, without seeing the
+    call's arguments. This override lets a read-only analysis run freely while a
+    saving analysis still pauses for approval. If the SDK ever stops calling this
+    hook, the require_approval fallback below still asks before every write-capable
+    call (fail closed).
+    """
+
+    def _get_needs_approval_for_tool(self, tool: Any, agent: Any) -> Any:  # SDK hook (openai-agents 0.24)
+        return needs_approval_for(tool.name)
+
+
 def build_server() -> MCPServerStreamableHttp:
-    return MCPServerStreamableHttp(
+    return CareerLensMCPServer(
         name="CareerLens",
         params={"url": MCP_URL, "timeout": 10},
         cache_tools_list=True,
         client_session_timeout_seconds=30,
         failure_error_function=show_tool_error,
+        require_approval={name: "always" for name in WRITE_TOOLS},
     )
 
 
@@ -103,23 +142,90 @@ def _short(value: Any, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + " ..."
 
 
-def print_trace(items: list) -> None:
+def print_trace(items: list, seen: set | None = None) -> None:
     """Show each step of the round trip: agent -> MCP client -> server -> back."""
+    seen = set() if seen is None else seen
     for item in items:
+        key = (type(item).__name__, id(item.raw_item))
+        if key in seen:
+            continue
+        seen.add(key)
         if isinstance(item, ToolCallItem):
             raw = item.raw_item
             name = getattr(raw, "name", None) or (raw.get("name") if isinstance(raw, dict) else "?")
             args = getattr(raw, "arguments", None) or (raw.get("arguments") if isinstance(raw, dict) else "")
             print(f"  [agent -> MCP] call {name}({args})")
         elif isinstance(item, ToolCallOutputItem):
-            print(f"  [MCP -> agent] {_short(item.output)}")
+            if _unwrap(item.output) == REJECTION_MESSAGE:  # blocked by the host; never reached the server
+                print(f"  [host -> agent] {REJECTION_MESSAGE}")
+            else:
+                print(f"  [MCP -> agent] {_short(item.output)}")
+
+
+def describe_pending_write(item: ToolApprovalItem) -> str:
+    """Plain-language description of what an approval would allow."""
+    try:
+        args = json.loads(item.arguments or "{}")
+    except ValueError:
+        args = {}
+    if item.name == "save_skill_gap":
+        return (f"save '{args.get('skill')}' as {args.get('gap_type')} for {args.get('candidate_id')} / "
+                f"{args.get('job_id')}\n      rationale: {args.get('rationale')}")
+    if item.name == "investigate_job_fit":
+        return (f"analyze {args.get('candidate_id')} / {args.get('job_id')} and save every justified "
+                f"skill gap to the career plan")
+    return f"call {item.name}({item.arguments})"
+
+
+def ask_user_to_approve(item: ToolApprovalItem) -> bool:
+    print(f"\n  [approval needed] CareerLens wants to {describe_pending_write(item)}")
+    try:
+        answer = input("  Approve this write? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""  # no one to ask: fail closed
+    approved = answer in {"y", "yes"}
+    print(f"  [approval] {'approved' if approved else 'rejected'}\n")
+    return approved
 
 
 async def ask(agent: Agent, history: list, question: str) -> list:
+    seen: set = set()
     result = await Runner.run(agent, history + [{"role": "user", "content": question}])
-    print_trace(result.new_items)
+    while result.interruptions:  # the run paused before a write: ask the human
+        print_trace(result.new_items, seen)
+        state = result.to_state()
+        for item in result.interruptions:
+            if ask_user_to_approve(item):
+                state.approve(item)
+            else:
+                state.reject(item, rejection_message=REJECTION_MESSAGE)
+        result = await Runner.run(agent, state)
+    print_trace(result.new_items, seen)
     print(f"\nCareerLens: {result.final_output}\n")
     return result.to_input_list()
+
+
+def _hint(annotations: Any, name: str) -> Any:
+    if annotations is None:
+        return None
+    camel = name.split("_")[0] + "".join(p.title() for p in name.split("_")[1:])
+    return getattr(annotations, name, getattr(annotations, camel, None))
+
+
+def describe_annotations(annotations: Any) -> str:
+    """Turn MCP tool annotations into a short behavior label."""
+    if annotations is None:
+        return "no annotations"
+    if _hint(annotations, "read_only_hint"):
+        label = "read-only"
+    else:
+        destructive = _hint(annotations, "destructive_hint")
+        label = "writes: " + ("additive" if destructive is False else "may overwrite/delete")
+        if _hint(annotations, "idempotent_hint"):
+            label += ", idempotent"
+    if _hint(annotations, "open_world_hint") is False:
+        label += ", local data only"
+    return label
 
 
 async def list_tools(server: MCPServerStreamableHttp) -> None:
@@ -128,6 +234,7 @@ async def list_tools(server: MCPServerStreamableHttp) -> None:
     for t in tools:
         first_line = (t.description or "").strip().splitlines()[0] if t.description else ""
         print(f"  - {t.name}: {first_line}")
+        print(f"      behavior: {describe_annotations(getattr(t, 'annotations', None))}")
 
 
 async def main(argv: list[str]) -> int:

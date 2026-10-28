@@ -232,6 +232,18 @@ def test_mcp_tools_have_descriptions_and_typed_inputs():
         assert schema["properties"]
 
 
+def test_mcp_tool_annotations_describe_behavior():
+    async def run():
+        async with Client(mcp) as client:
+            return {t.name: t.annotations for t in await client.list_tools()}
+    ann = asyncio.run(run())
+    data, action, orch = ann["get_job_requirements"], ann["save_skill_gap"], ann["investigate_job_fit"]
+    assert data.read_only_hint is True
+    assert action.read_only_hint is False and action.destructive_hint is False and action.idempotent_hint is True
+    assert orch.read_only_hint is False and orch.destructive_hint is False and orch.idempotent_hint is True
+    assert all(a.open_world_hint is False for a in ann.values())
+
+
 def test_mcp_unexpected_errors_are_masked(monkeypatch):
     def boom(job_id):
         raise RuntimeError("secret internal path C:/hidden/db")
@@ -317,6 +329,43 @@ def test_integration_agents_sdk_client_round_trip(http_server, data_dir):
     assert not _is_error(report)
     assert [e["skill"] for e in plan_entries(data_dir)] == ["Docker"]
     assert _is_error(failure) and "Available job IDs" in failure.content[0].text
+
+
+def test_agent_approval_policy_only_pauses_writes():
+    import agent as host
+
+    async def policy(name, args):
+        rule = host.needs_approval_for(name)
+        return await rule(None, args, "call-1") if callable(rule) else rule
+
+    assert asyncio.run(policy("get_job_requirements", {"job_id": "J003"})) is False
+    assert asyncio.run(policy("save_skill_gap", {})) is True
+    assert asyncio.run(policy("investigate_job_fit", {"save_gap": False})) is False
+    assert asyncio.run(policy("investigate_job_fit", {"save_gap": True})) is True
+
+
+def test_agent_server_uses_approval_policy_with_fail_closed_fallback():
+    import agent as host
+    from mcp_types import Tool
+
+    server = host.build_server()
+    tool = Tool(name="save_skill_gap", input_schema={"type": "object", "properties": {}})
+    assert server._get_needs_approval_for_tool(tool, None) is True
+    assert all(server._normalize_needs_approval(
+        require_approval={n: "always" for n in host.WRITE_TOOLS}).get(n) for n in host.WRITE_TOOLS)
+
+
+def test_agent_rejects_write_when_no_one_can_answer(monkeypatch):
+    import agent as host
+    from types import SimpleNamespace
+
+    def no_terminal(prompt=""):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", no_terminal)
+    item = SimpleNamespace(name="save_skill_gap", arguments=json.dumps(
+        {"candidate_id": "C001", "job_id": "J003", "skill": "Docker", "gap_type": "missing_skill",
+         "rationale": REASON}))
+    assert host.ask_user_to_approve(item) is False
 
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS") != "1" or not os.getenv("OPENAI_API_KEY"),

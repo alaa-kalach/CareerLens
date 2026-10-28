@@ -12,11 +12,34 @@ import os
 from typing import Annotated
 
 from fastmcp import FastMCP
+from mcp_types import ToolAnnotations
 from pydantic import Field
 
 from server import careerlens as core
 
 logger = logging.getLogger("careerlens.server")
+
+# MCP tool annotations: protocol-level hints that tell clients how each tool behaves.
+# All three tools only touch local CareerLens data, so none is open-world.
+DATA_ANNOTATIONS = ToolAnnotations(
+    title="Get job requirements",
+    read_only_hint=True,       # never modifies anything
+    open_world_hint=False,
+)
+ACTION_ANNOTATIONS = ToolAnnotations(
+    title="Save skill gap",
+    read_only_hint=False,      # writes to career_plan.json
+    destructive_hint=False,    # additive only: never overwrites or deletes entries
+    idempotent_hint=True,      # repeating the same call returns 'already_exists'
+    open_world_hint=False,
+)
+ORCHESTRATION_ANNOTATIONS = ToolAnnotations(
+    title="Investigate job fit",
+    read_only_hint=False,      # may write, but only when save_gap=true
+    destructive_hint=False,    # saves go through the additive Action logic
+    idempotent_hint=True,      # a repeated save reports 'already_exists'
+    open_world_hint=False,
+)
 
 mcp = FastMCP(
     name="CareerLens",
@@ -30,7 +53,7 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool
+@mcp.tool(annotations=DATA_ANNOTATIONS)
 def get_job_requirements(
     job_id: Annotated[str, Field(description="Job identifier, e.g. 'J003'. Case-insensitive.")],
 ) -> core.JobRequirements:
@@ -54,7 +77,7 @@ def get_job_requirements(
     return result
 
 
-@mcp.tool
+@mcp.tool(annotations=ACTION_ANNOTATIONS)
 def save_skill_gap(
     candidate_id: Annotated[str, Field(description="Candidate identifier, e.g. 'C001'.")],
     job_id: Annotated[str, Field(description="Job the entry relates to, e.g. 'J003'.")],
@@ -97,7 +120,7 @@ def save_skill_gap(
     return result
 
 
-@mcp.tool
+@mcp.tool(annotations=ORCHESTRATION_ANNOTATIONS)
 def investigate_job_fit(
     candidate_id: Annotated[str, Field(description="Candidate identifier, e.g. 'C001'.")],
     job_id: Annotated[str, Field(description="Job identifier, e.g. 'J003'.")],
