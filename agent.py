@@ -23,7 +23,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agents import Agent, ItemHelpers, RunContextWrapper, Runner
+from agents import Agent, RunContextWrapper, Runner
 from agents.items import ToolApprovalItem, ToolCallItem, ToolCallOutputItem
 from agents.mcp import MCPServerStreamableHttp
 
@@ -258,7 +258,11 @@ async def main(argv: list[str]) -> int:
         agent = build_agent(server)
         question = " ".join(a for a in argv if not a.startswith("--"))
         if question:
-            await ask(agent, [], question)
+            try:
+                await ask(agent, [], question)
+            except Exception as e:  # e.g. API key or network problems: report without a traceback
+                print(f"\n[error] {type(e).__name__}: {e}\n")
+                return 1
             return 0
 
         print(f"CareerLens agent connected to {MCP_URL}. Type 'exit' to quit.\n")

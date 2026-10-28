@@ -2,8 +2,8 @@
 
 Exposes exactly three MCP tools:
   - DATA:          get_job_requirements
-  - ACTION:        save_skill_gap        (added in Step 4)
-  - ORCHESTRATION: investigate_job_fit   (added in Step 5)
+  - ACTION:        save_skill_gap
+  - ORCHESTRATION: investigate_job_fit
 
 Run (from the project root):  python -m server.mcp_server
 """

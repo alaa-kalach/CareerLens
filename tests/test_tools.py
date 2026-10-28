@@ -61,6 +61,12 @@ def test_data_missing_dataset_raises_storage_error(data_dir):
         core.get_job_requirements("J001")
 
 
+def test_data_non_object_record_raises_storage_error(data_dir):
+    (data_dir / "jobs.json").write_text('{"jobs": ["oops"]}', encoding="utf-8")
+    with pytest.raises(core.StorageError, match="not an object"):
+        core.get_job_requirements("J001")
+
+
 def test_data_corrupt_dataset_raises_storage_error(data_dir):
     (data_dir / "jobs.json").write_text("{ not json", encoding="utf-8")
     with pytest.raises(core.StorageError, match="not valid JSON"):
@@ -116,6 +122,14 @@ def test_action_corrupt_plan_file_is_never_overwritten(data_dir):
     with pytest.raises(core.StorageError):
         core.save_skill_gap("C001", "J003", "Docker", "missing_skill", REASON)
     assert plan.read_text(encoding="utf-8") == "{ broken"
+
+
+def test_action_plan_with_non_object_entry_is_refused_not_overwritten(data_dir):
+    plan = data_dir / "career_plan.json"
+    plan.write_text('{"entries": ["oops"]}', encoding="utf-8")
+    with pytest.raises(core.StorageError, match="refusing to overwrite"):
+        core.save_skill_gap("C001", "J003", "Docker", "missing_skill", REASON)
+    assert plan.read_text(encoding="utf-8") == '{"entries": ["oops"]}'
 
 
 def test_action_concurrent_saves_lose_nothing_and_never_duplicate(data_dir):

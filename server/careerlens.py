@@ -91,6 +91,8 @@ def _load_records(filename: str, key: str) -> list[dict]:
     data = _load_json(filename)
     if not isinstance(data, dict) or not isinstance(data.get(key), list):
         raise StorageError(f"Data file '{filename}' must be an object with a '{key}' list.")
+    if not all(isinstance(record, dict) for record in data[key]):
+        raise StorageError(f"Data file '{filename}' contains a '{key}' entry that is not an object.")
     return data[key]
 
 
@@ -129,7 +131,7 @@ def find_candidate(candidate_id: str) -> dict:
     cid = _normalize_id(candidate_id, "candidate_id")
     candidates = _load_records("candidates.json", "candidates")
     for c in candidates:
-        if isinstance(c, dict) and str(c.get("candidate_id", "")).strip().upper() == cid:
+        if str(c.get("candidate_id", "")).strip().upper() == cid:
             return c
     available = ", ".join(sorted(str(c.get("candidate_id", "?")) for c in candidates)) or "none"
     raise CandidateNotFoundError(f"No candidate with candidate_id '{cid}'. Available candidate IDs: {available}.")
@@ -171,9 +173,13 @@ def _read_career_plan() -> dict:
     if not path.exists():
         return {"entries": []}  # a missing plan simply starts empty; it is created on first save
     data = _load_json(CAREER_PLAN_FILE)
-    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("entries"), list)
+        or not all(isinstance(entry, dict) for entry in data["entries"])
+    ):
         raise StorageError(
-            f"'{CAREER_PLAN_FILE}' is malformed (expected an object with an 'entries' list); "
+            f"'{CAREER_PLAN_FILE}' is malformed (expected an object with an 'entries' list of objects); "
             "refusing to overwrite it."
         )
     return data
