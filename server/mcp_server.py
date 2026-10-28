@@ -8,6 +8,7 @@ Exposes exactly three MCP tools:
 Run (from the project root):  python -m server.mcp_server
 """
 import logging
+import os
 from typing import Annotated
 
 from fastmcp import FastMCP
@@ -135,6 +136,6 @@ def investigate_job_fit(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
     try:
-        mcp.run(transport="http", host="127.0.0.1", port=8000)
+        mcp.run(transport="http", host="127.0.0.1", port=int(os.getenv("CAREERLENS_PORT", "8000")))
     except KeyboardInterrupt:
         logger.info("Server stopped.")
