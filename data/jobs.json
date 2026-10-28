@@ -1,0 +1,93 @@
+{
+  "jobs": [
+    {
+      "job_id": "J001",
+      "title": "Machine Learning Intern",
+      "description": "Support the data science team in building and evaluating predictive models.",
+      "required_skills": [
+        {"skill": "Python", "related": []},
+        {"skill": "scikit-learn", "related": []},
+        {"skill": "pandas", "related": []},
+        {"skill": "Git", "related": []}
+      ],
+      "preferred_skills": [
+        {"skill": "PyTorch", "related": ["TensorFlow", "Keras"]},
+        {"skill": "SQL", "related": []},
+        {"skill": "Docker", "related": []}
+      ],
+      "min_experience_months": 0,
+      "experience_requirements": ["At least one machine learning project (academic or personal)."]
+    },
+    {
+      "job_id": "J002",
+      "title": "Data Analyst Intern",
+      "description": "Turn business data into reports and dashboards for decision makers.",
+      "required_skills": [
+        {"skill": "SQL", "related": []},
+        {"skill": "Excel", "related": []},
+        {"skill": "Power BI", "related": ["Tableau"]},
+        {"skill": "Python", "related": []}
+      ],
+      "preferred_skills": [
+        {"skill": "pandas", "related": []},
+        {"skill": "Statistics", "related": []},
+        {"skill": "Tableau", "related": ["Power BI"]}
+      ],
+      "min_experience_months": 0,
+      "experience_requirements": ["Experience building at least one report or dashboard."]
+    },
+    {
+      "job_id": "J003",
+      "title": "AI Engineer Intern",
+      "description": "Help build, containerize, and serve deep learning models behind internal APIs.",
+      "required_skills": [
+        {"skill": "Python", "related": []},
+        {"skill": "PyTorch", "related": ["TensorFlow", "Keras"]},
+        {"skill": "Docker", "related": []},
+        {"skill": "Git", "related": []},
+        {"skill": "REST APIs", "related": ["FastAPI", "Flask"]}
+      ],
+      "preferred_skills": [
+        {"skill": "FastAPI", "related": ["Flask"]},
+        {"skill": "Linux", "related": []}
+      ],
+      "min_experience_months": 3,
+      "experience_requirements": ["At least 3 months of hands-on ML or software engineering work."]
+    },
+    {
+      "job_id": "J004",
+      "title": "Junior Python Developer",
+      "description": "Develop and maintain Python backend services with a focus on code quality.",
+      "required_skills": [
+        {"skill": "Python", "related": []},
+        {"skill": "Git", "related": []},
+        {"skill": "SQL", "related": []},
+        {"skill": "Unit Testing", "related": ["pytest"]}
+      ],
+      "preferred_skills": [
+        {"skill": "FastAPI", "related": ["Flask"]},
+        {"skill": "Docker", "related": []},
+        {"skill": "Linux", "related": []}
+      ],
+      "min_experience_months": 6,
+      "experience_requirements": ["At least 6 months of Python development experience."]
+    },
+    {
+      "job_id": "J005",
+      "title": "ML Research Assistant",
+      "description": "Assist a research lab with deep learning experiments and paper preparation.",
+      "required_skills": [
+        {"skill": "Python", "related": []},
+        {"skill": "PyTorch", "related": ["TensorFlow", "Keras"]},
+        {"skill": "NumPy", "related": []},
+        {"skill": "Technical Writing", "related": ["LaTeX"]}
+      ],
+      "preferred_skills": [
+        {"skill": "LaTeX", "related": []},
+        {"skill": "Statistics", "related": []}
+      ],
+      "min_experience_months": 0,
+      "experience_requirements": ["Completed coursework in machine learning or deep learning."]
+    }
+  ]
+}

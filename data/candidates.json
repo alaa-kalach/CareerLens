@@ -1,0 +1,69 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "C001",
+      "name": "Lina Haddad",
+      "education": "BE Computer and Communications Engineering (expected 2027)",
+      "skills": ["Python", "pandas", "NumPy", "scikit-learn", "TensorFlow", "Git"],
+      "known_gaps": ["Docker"],
+      "projects": [
+        {
+          "project_id": "P1",
+          "name": "Student Performance Prediction",
+          "description": "Trained and evaluated classification models on a student performance dataset.",
+          "skills_used": ["Python", "pandas", "scikit-learn"]
+        },
+        {
+          "project_id": "P2",
+          "name": "Handwritten Digit Classifier",
+          "description": "Built and trained a convolutional neural network on MNIST.",
+          "skills_used": ["Python", "TensorFlow", "NumPy"]
+        }
+      ],
+      "experience": [
+        {
+          "experience_id": "E1",
+          "role": "Machine Learning Course Project Lead",
+          "organization": "University coursework",
+          "months": 4,
+          "description": "Led a three-person team building a supervised learning pipeline.",
+          "skills_used": ["Python", "scikit-learn"]
+        }
+      ]
+    },
+    {
+      "candidate_id": "C002",
+      "name": "Omar Khalil",
+      "education": "BS Business Analytics (2026)",
+      "skills": ["SQL", "Excel", "Power BI", "Python", "pandas", "Statistics"],
+      "known_gaps": ["Tableau"],
+      "projects": [
+        {
+          "project_id": "P1",
+          "name": "Retail Sales Dashboard",
+          "description": "Built an interactive sales dashboard from a relational database.",
+          "skills_used": ["Power BI", "SQL", "Excel"]
+        }
+      ],
+      "experience": [
+        {
+          "experience_id": "E1",
+          "role": "Data Analyst Intern",
+          "organization": "Fictional Retail Co.",
+          "months": 3,
+          "description": "Wrote SQL reports and maintained Excel KPI trackers.",
+          "skills_used": ["SQL", "Excel"]
+        }
+      ]
+    },
+    {
+      "candidate_id": "C003",
+      "name": "Rami Saab",
+      "education": "",
+      "skills": ["Java"],
+      "known_gaps": [],
+      "projects": [],
+      "experience": []
+    }
+  ]
+}
