@@ -31,9 +31,7 @@ def plan_entries(data_dir: Path) -> list:
     return json.loads((data_dir / "career_plan.json").read_text(encoding="utf-8"))["entries"]
 
 
-# ===========================================================================
-# 1a. DATA tool: get_job_requirements
-# ===========================================================================
+# DATA tool: get_job_requirements
 def test_data_valid_job_returns_structured_requirements(data_dir):
     job = core.get_job_requirements("J003")
     assert job.title == "AI Engineer Intern"
@@ -73,9 +71,7 @@ def test_data_corrupt_dataset_raises_storage_error(data_dir):
         core.get_job_requirements("J001")
 
 
-# ===========================================================================
-# 1b. ACTION tool: save_skill_gap
-# ===========================================================================
+# ACTION tool: save_skill_gap
 def test_action_valid_save_writes_one_entry(data_dir):
     r = core.save_skill_gap("C001", "J003", "docker", "missing_skill", REASON)
     assert r.status == "saved" and r.record_id.startswith("GAP-")
@@ -143,9 +139,7 @@ def test_action_concurrent_saves_lose_nothing_and_never_duplicate(data_dir):
     assert len(plan_entries(data_dir)) == 1 + len(different)
 
 
-# ===========================================================================
-# 1c. ORCHESTRATION tool: investigate_job_fit
-# ===========================================================================
+# ORCHESTRATION tool: investigate_job_fit
 def labels(report) -> dict:
     return {a.skill: a.label for a in report.skills}
 
@@ -204,7 +198,6 @@ def test_orchestration_incomplete_profile_reports_limitations(data_dir):
 
 
 def test_orchestration_explicit_gap_outranks_related_evidence(data_dir):
-    # Omar lists Tableau as a known gap even though he uses the related Power BI.
     r = core.investigate_job_fit("C002", "J002")
     assert labels(r)["Tableau"] == "skill_gap"
 
@@ -226,9 +219,7 @@ def test_orchestration_storage_failure_is_reported_not_hidden(data_dir):
     assert "failed 1" in r.save_note
 
 
-# ===========================================================================
-# 2. MCP layer (FastMCP in-memory client)
-# ===========================================================================
+# MCP layer (FastMCP in-memory client)
 def test_mcp_exposes_exactly_three_tools():
     async def run():
         async with Client(mcp) as client:
@@ -287,9 +278,7 @@ def test_mcp_round_trip_and_error_reach_client(data_dir):
     assert plan_entries(data_dir) == []
 
 
-# ===========================================================================
-# 3. Integration: real HTTP server + OpenAI Agents SDK MCP client
-# ===========================================================================
+# Integration: real HTTP server + OpenAI Agents SDK MCP client
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

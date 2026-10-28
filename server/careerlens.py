@@ -27,9 +27,6 @@ def data_dir() -> Path:
     return Path(os.environ.get("CAREERLENS_DATA_DIR", DEFAULT_DATA_DIR))
 
 
-# ---------------------------------------------------------------------------
-# Errors. All subclass ToolError so the message always reaches the agent.
-# ---------------------------------------------------------------------------
 class CareerLensError(ToolError):
     """Base class for all predictable CareerLens failures."""
 
@@ -50,9 +47,7 @@ class StorageError(CareerLensError):
     """A data file is missing, unreadable, malformed, or could not be written."""
 
 
-# ---------------------------------------------------------------------------
 # Typed models
-# ---------------------------------------------------------------------------
 class SkillRequirement(BaseModel):
     skill: str = Field(description="Name of the required or preferred skill.")
     related: list[str] = Field(
@@ -71,9 +66,7 @@ class JobRequirements(BaseModel):
     experience_requirements: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
 # Storage helpers
-# ---------------------------------------------------------------------------
 def _load_json(filename: str) -> Any:
     path = data_dir() / filename
     try:
@@ -102,9 +95,7 @@ def _normalize_id(value: str, field_name: str) -> str:
     return value.strip().upper()
 
 
-# ---------------------------------------------------------------------------
 # DATA tool logic
-# ---------------------------------------------------------------------------
 def get_job_requirements(job_id: str) -> JobRequirements:
     """Return the requirements of one job. Read-only: never assesses or writes anything."""
     jid = _normalize_id(job_id, "job_id")
@@ -123,9 +114,7 @@ def get_job_requirements(job_id: str) -> JobRequirements:
     raise JobNotFoundError(f"No job with job_id '{jid}'. Available job IDs: {available}.")
 
 
-# ---------------------------------------------------------------------------
 # Candidate lookup (internal helper, deliberately NOT an exposed MCP tool)
-# ---------------------------------------------------------------------------
 def find_candidate(candidate_id: str) -> dict:
     """Return the raw candidate record. Used by the Action and Orchestration logic."""
     cid = _normalize_id(candidate_id, "candidate_id")
@@ -137,9 +126,7 @@ def find_candidate(candidate_id: str) -> dict:
     raise CandidateNotFoundError(f"No candidate with candidate_id '{cid}'. Available candidate IDs: {available}.")
 
 
-# ---------------------------------------------------------------------------
 # ACTION tool logic
-# ---------------------------------------------------------------------------
 GapType = Literal["missing_skill", "insufficient_evidence", "development_goal"]
 ALLOWED_GAP_TYPES: tuple[str, ...] = get_args(GapType)
 MIN_RATIONALE_CHARS = 10
@@ -193,7 +180,7 @@ def _write_career_plan(plan: dict) -> None:
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2)
             f.write("\n")
-        os.replace(tmp, path)  # atomic: the old file stays intact if anything above fails
+        os.replace(tmp, path)  
     except OSError as e:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
@@ -270,9 +257,7 @@ def save_skill_gap(
     )
 
 
-# ---------------------------------------------------------------------------
 # ORCHESTRATION tool logic
-# ---------------------------------------------------------------------------
 MatchLabel = Literal["supported_match", "possible_match", "skill_gap", "missing_evidence"]
 LABEL_ORDER: tuple[str, ...] = get_args(MatchLabel)
 
