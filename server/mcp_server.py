@@ -93,6 +93,45 @@ def save_skill_gap(
     return result
 
 
+@mcp.tool
+def investigate_job_fit(
+    candidate_id: Annotated[str, Field(description="Candidate identifier, e.g. 'C001'.")],
+    job_id: Annotated[str, Field(description="Job identifier, e.g. 'J003'.")],
+    save_gap: Annotated[
+        bool,
+        Field(description="If true, save each justified skill gap to the career plan. Default false (read-only)."),
+    ] = False,
+) -> core.JobFitReport:
+    """[ORCHESTRATION] Produce an evidence-based fit report for one candidate and one job.
+
+    Retrieves the job requirements (Data logic), compares them with the
+    candidate profile, and labels every required and preferred skill as
+    supported_match, possible_match, skill_gap, or missing_evidence, with the
+    evidence behind each label. Also assesses experience, lists profile
+    limitations, and suggests next steps. The coverage score is transparent and
+    is NOT a hiring probability.
+
+    Only when save_gap is true, saves each explicit skill gap through the Action
+    logic and reports every save outcome truthfully. Missing evidence is never
+    saved as a gap. If the job or candidate cannot be found, it stops with a
+    clear error and writes nothing.
+    """
+    logger.info(
+        "ORCHESTRATION tool called: investigate_job_fit(candidate_id=%r, job_id=%r, save_gap=%r)",
+        candidate_id, job_id, save_gap,
+    )
+    try:
+        report = core.investigate_job_fit(candidate_id, job_id, save_gap)
+    except core.CareerLensError as e:
+        logger.warning("ORCHESTRATION tool failed (nothing written): %s", e)
+        raise
+    logger.info(
+        "ORCHESTRATION tool result: %s vs %s | coverage=%s%% | labels=%s | %s",
+        report.candidate_id, report.job_id, report.required_coverage_score, report.label_counts, report.save_note,
+    )
+    return report
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
     try:

@@ -257,3 +257,210 @@ def save_skill_gap(
         message=f"Saved {gap_type} entry for '{canonical_skill}' ({cid} / {job.job_id}).",
         entry=entry,
     )
+
+
+# ---------------------------------------------------------------------------
+# ORCHESTRATION tool logic
+# ---------------------------------------------------------------------------
+MatchLabel = Literal["supported_match", "possible_match", "skill_gap", "missing_evidence"]
+LABEL_ORDER: tuple[str, ...] = get_args(MatchLabel)
+
+
+class SkillAssessment(BaseModel):
+    skill: str
+    requirement: Literal["required", "preferred"]
+    label: MatchLabel
+    evidence: list[str] = Field(default_factory=list, description="Where in the profile the label comes from.")
+    explanation: str
+
+
+class ExperienceAssessment(BaseModel):
+    required_months: int
+    evidenced_months: int
+    status: Literal["meets", "below_minimum", "not_established", "not_required"]
+    explanation: str
+
+
+class SaveOutcome(BaseModel):
+    skill: str
+    gap_type: GapType
+    status: Literal["saved", "already_exists", "failed"]
+    record_id: str | None = None
+    message: str
+
+
+class JobFitReport(BaseModel):
+    candidate_id: str
+    candidate_name: str
+    job_id: str
+    job_title: str
+    required_coverage_score: float = Field(
+        description="Percent of required skills covered (supported = 1, possible = 0.5). Not a hiring probability."
+    )
+    score_explanation: str
+    label_counts: dict[str, int]
+    skills: list[SkillAssessment]
+    experience: ExperienceAssessment
+    profile_limitations: list[str]
+    next_steps: list[str]
+    save_requested: bool
+    saved_entries: list[SaveOutcome]
+    save_note: str
+
+
+def _evidence_index(candidate: dict) -> dict[str, list[str]]:
+    """Map lowercase skill -> descriptions of the projects/roles where it was used."""
+    index: dict[str, list[str]] = {}
+    for p in candidate.get("projects") or []:
+        where = f"project '{p.get('name', '?')}' ({p.get('project_id', '?')})"
+        for s in p.get("skills_used") or []:
+            index.setdefault(str(s).lower(), []).append(where)
+    for e in candidate.get("experience") or []:
+        where = f"role '{e.get('role', '?')}' at {e.get('organization', '?')} ({e.get('experience_id', '?')})"
+        for s in e.get("skills_used") or []:
+            index.setdefault(str(s).lower(), []).append(where)
+    return index
+
+
+def _assess_skill(req: SkillRequirement, requirement: str, candidate: dict, evidence: dict[str, list[str]]) -> SkillAssessment:
+    key = req.skill.lower()
+    listed = {str(s).lower() for s in candidate.get("skills") or []}
+    known_gaps = {str(s).lower() for s in candidate.get("known_gaps") or []}
+
+    if key in evidence:
+        return SkillAssessment(
+            skill=req.skill, requirement=requirement, label="supported_match", evidence=evidence[key],
+            explanation=f"{req.skill} is used in {len(evidence[key])} project(s)/role(s).",
+        )
+    if key in known_gaps:
+        return SkillAssessment(
+            skill=req.skill, requirement=requirement, label="skill_gap",
+            evidence=["listed under known_gaps in the profile"],
+            explanation=f"The candidate has stated they do not currently have {req.skill}.",
+        )
+    related_hits = [r for r in req.related if r.lower() in evidence or r.lower() in listed]
+    if related_hits:
+        ev = []
+        for r in related_hits:
+            ev += [f"related skill {r} used in {w}" for w in evidence.get(r.lower(), [])] or [f"related skill {r} listed in skills"]
+        return SkillAssessment(
+            skill=req.skill, requirement=requirement, label="possible_match", evidence=ev,
+            explanation=f"No direct evidence of {req.skill}, but related experience exists ({', '.join(related_hits)}).",
+        )
+    if key in listed:
+        return SkillAssessment(
+            skill=req.skill, requirement=requirement, label="possible_match",
+            evidence=["listed in skills section only"],
+            explanation=f"{req.skill} is listed, but no project or role shows it being used.",
+        )
+    return SkillAssessment(
+        skill=req.skill, requirement=requirement, label="missing_evidence",
+        explanation=f"The profile does not show whether the candidate has {req.skill}. This is not treated as a gap.",
+    )
+
+
+def _assess_experience(job: JobRequirements, candidate: dict) -> ExperienceAssessment:
+    roles = candidate.get("experience") or []
+    months = sum(int(e.get("months") or 0) for e in roles)
+    need = job.min_experience_months
+    if need == 0:
+        return ExperienceAssessment(required_months=0, evidenced_months=months, status="not_required",
+                                    explanation="The job has no minimum experience requirement.")
+    if not roles:
+        return ExperienceAssessment(required_months=need, evidenced_months=0, status="not_established",
+                                    explanation=f"The job asks for {need} months; the profile lists no experience, so this cannot be assessed.")
+    if months >= need:
+        return ExperienceAssessment(required_months=need, evidenced_months=months, status="meets",
+                                    explanation=f"{months} months of listed experience meets the {need}-month minimum.")
+    return ExperienceAssessment(required_months=need, evidenced_months=months, status="below_minimum",
+                                explanation=f"{months} months of listed experience is below the {need}-month minimum.")
+
+
+def _profile_limitations(candidate: dict) -> list[str]:
+    notes = []
+    if not candidate.get("skills"):
+        notes.append("No skills are listed in the profile.")
+    if not candidate.get("projects") and not candidate.get("experience"):
+        notes.append("No projects or work experience are listed, so no skill can be marked as a supported match.")
+    if not str(candidate.get("education") or "").strip():
+        notes.append("Education is not specified.")
+    return notes
+
+
+def _next_steps(skills: list[SkillAssessment], experience: ExperienceAssessment) -> list[str]:
+    steps = []
+    for a in sorted(skills, key=lambda a: a.requirement != "required"):
+        tag = "required" if a.requirement == "required" else "preferred"
+        if a.label == "skill_gap":
+            steps.append(f"Close the {tag} gap in {a.skill} with a small hands-on project.")
+        elif a.label == "missing_evidence":
+            steps.append(f"{a.skill} ({tag}) is not shown: if you have it, add a project or role that demonstrates it; otherwise consider learning it.")
+        elif a.label == "possible_match" and a.evidence and a.evidence[0].startswith("related skill"):
+            steps.append(f"Your related experience could transfer to {a.skill} ({tag}); a short project using {a.skill} would make it supported evidence.")
+        elif a.label == "possible_match":
+            steps.append(f"Describe where you used {a.skill} ({tag}) so the claim is backed by evidence.")
+    if experience.status == "below_minimum":
+        steps.append(f"Gain about {experience.required_months - experience.evidenced_months} more months of relevant experience.")
+    elif experience.status == "not_established":
+        steps.append("Add your work or project experience (with durations) to the profile.")
+    return steps
+
+
+def investigate_job_fit(candidate_id: str, job_id: str, save_gap: bool = False) -> JobFitReport:
+    """Coordinate the workflow: Data logic -> candidate comparison -> (optional) Action logic."""
+    # 1. Retrieve the job first. If this fails, the error propagates and nothing is written.
+    job = get_job_requirements(job_id)
+    # 2. Load the candidate (internal helper, not an exposed tool).
+    candidate = find_candidate(candidate_id)
+    cid = str(candidate["candidate_id"]).upper()
+
+    # 3. Compare
+    evidence = _evidence_index(candidate)
+    skills = [_assess_skill(r, "required", candidate, evidence) for r in job.required_skills]
+    skills += [_assess_skill(r, "preferred", candidate, evidence) for r in job.preferred_skills]
+    experience = _assess_experience(job, candidate)
+
+    required = [a for a in skills if a.requirement == "required"]
+    points = sum(1.0 if a.label == "supported_match" else 0.5 if a.label == "possible_match" else 0.0 for a in required)
+    score = round(100 * points / len(required), 1) if required else 0.0
+    counts = {label: sum(a.label == label for a in skills) for label in LABEL_ORDER}
+
+    # 4. Optionally save: only explicit skill gaps are justified entries
+    outcomes: list[SaveOutcome] = []
+    if not save_gap:
+        note = "Saving was not requested; the career plan was not modified."
+    else:
+        gaps = [a for a in skills if a.label == "skill_gap"]
+        for a in gaps:
+            rationale = (f"{cid} lists {a.skill} under known gaps; it is a {a.requirement} skill for "
+                         f"{job.job_id} ({job.title}).")
+            try:
+                r = save_skill_gap(cid, job.job_id, a.skill, "missing_skill", rationale)
+                outcomes.append(SaveOutcome(skill=a.skill, gap_type="missing_skill", status=r.status,
+                                            record_id=r.record_id, message=r.message))
+            except CareerLensError as e:
+                outcomes.append(SaveOutcome(skill=a.skill, gap_type="missing_skill", status="failed", message=str(e)))
+        if not gaps:
+            note = ("No skill gap is justified by the profile (missing evidence is not treated as a gap); "
+                    "nothing was saved.")
+        else:
+            n = {s: sum(o.status == s for o in outcomes) for s in ("saved", "already_exists", "failed")}
+            note = f"Saved {n['saved']}, already existed {n['already_exists']}, failed {n['failed']}."
+
+    return JobFitReport(
+        candidate_id=cid,
+        candidate_name=str(candidate.get("name") or cid),
+        job_id=job.job_id,
+        job_title=job.title,
+        required_coverage_score=score,
+        score_explanation=(f"{points:g} of {len(required)} required skills covered (supported = 1, possible = 0.5). "
+                           "This measures evidence coverage, not the probability of being hired."),
+        label_counts=counts,
+        skills=skills,
+        experience=experience,
+        profile_limitations=_profile_limitations(candidate),
+        next_steps=_next_steps(skills, experience),
+        save_requested=save_gap,
+        saved_entries=outcomes,
+        save_note=note,
+    )
