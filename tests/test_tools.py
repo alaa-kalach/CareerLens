@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,17 @@ def test_action_corrupt_plan_file_is_never_overwritten(data_dir):
     assert plan.read_text(encoding="utf-8") == "{ broken"
 
 
+def test_action_concurrent_saves_lose_nothing_and_never_duplicate(data_dir):
+    same = ("C001", "J003", "Docker", "missing_skill", REASON)
+    different = [("C001", "J003", skill, "development_goal", f"Candidate wants to develop {skill}.")
+                 for skill in ("Python", "PyTorch", "Git", "REST APIs", "FastAPI", "Linux")]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda a: core.save_skill_gap(*a), [same] * 8 + different))
+    assert sum(r.status == "saved" for r in results[:8]) == 1
+    assert len({r.record_id for r in results[:8]}) == 1
+    assert len(plan_entries(data_dir)) == 1 + len(different)
+
+
 # ===========================================================================
 # 1c. ORCHESTRATION tool: investigate_job_fit
 # ===========================================================================
@@ -183,6 +195,16 @@ def test_orchestration_explicit_gap_outranks_related_evidence(data_dir):
     assert labels(r)["Tableau"] == "skill_gap"
 
 
+def test_orchestration_malformed_candidate_fails_clearly(data_dir):
+    path = data_dir / "candidates.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["candidates"][0]["experience"][0]["months"] = "four"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(core.StorageError, match="malformed"):
+        core.investigate_job_fit("C001", "J003", save_gap=True)
+    assert plan_entries(data_dir) == []
+
+
 def test_orchestration_storage_failure_is_reported_not_hidden(data_dir):
     (data_dir / "career_plan.json").write_text("{ broken", encoding="utf-8")
     r = core.investigate_job_fit("C001", "J003", save_gap=True)
@@ -208,6 +230,19 @@ def test_mcp_tools_have_descriptions_and_typed_inputs():
         assert tool.description and tool.description.startswith("[")
         schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema")
         assert schema["properties"]
+
+
+def test_mcp_unexpected_errors_are_masked(monkeypatch):
+    def boom(job_id):
+        raise RuntimeError("secret internal path C:/hidden/db")
+    monkeypatch.setattr(core, "get_job_requirements", boom)
+
+    async def run():
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError) as info:
+                await client.call_tool("get_job_requirements", {"job_id": "J001"})
+            return str(info.value)
+    assert "secret internal path" not in asyncio.run(run())
 
 
 def test_mcp_round_trip_and_error_reach_client(data_dir):

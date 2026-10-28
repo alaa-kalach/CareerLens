@@ -24,6 +24,9 @@ mcp = FastMCP(
         "CareerLens compares a candidate profile with a job posting and reports "
         "evidence-based matches, missing evidence, and skill gaps."
     ),
+    # CareerLens errors are ToolErrors and always reach the agent with their message.
+    # Any unexpected exception (a bug) is masked so internal details never leak to clients.
+    mask_error_details=True,
 )
 
 

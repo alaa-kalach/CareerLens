@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,7 +129,7 @@ def find_candidate(candidate_id: str) -> dict:
     cid = _normalize_id(candidate_id, "candidate_id")
     candidates = _load_records("candidates.json", "candidates")
     for c in candidates:
-        if str(c.get("candidate_id", "")).strip().upper() == cid:
+        if isinstance(c, dict) and str(c.get("candidate_id", "")).strip().upper() == cid:
             return c
     available = ", ".join(sorted(str(c.get("candidate_id", "?")) for c in candidates)) or "none"
     raise CandidateNotFoundError(f"No candidate with candidate_id '{cid}'. Available candidate IDs: {available}.")
@@ -141,6 +142,9 @@ GapType = Literal["missing_skill", "insufficient_evidence", "development_goal"]
 ALLOWED_GAP_TYPES: tuple[str, ...] = get_args(GapType)
 MIN_RATIONALE_CHARS = 10
 CAREER_PLAN_FILE = "career_plan.json"
+# FastMCP runs sync tools in a threadpool, so concurrent saves are possible. The lock makes the
+# read -> duplicate check -> write sequence atomic, so no entry is lost or duplicated.
+_PLAN_LOCK = threading.Lock()
 
 
 class CareerPlanEntry(BaseModel):
@@ -219,38 +223,39 @@ def save_skill_gap(
         )
     cid = str(candidate["candidate_id"]).upper()
 
-    # 3. Duplicate check: never write the same entry twice
-    plan = _read_career_plan()
-    for raw in plan["entries"]:
-        if (
-            str(raw.get("candidate_id", "")).upper() == cid
-            and str(raw.get("job_id", "")).upper() == job.job_id
-            and str(raw.get("skill", "")).lower() == canonical_skill.lower()
-            and raw.get("gap_type") == gap_type
-        ):
-            try:
-                existing = CareerPlanEntry.model_validate(raw)
-            except ValidationError:
-                raise StorageError(f"Existing entry in '{CAREER_PLAN_FILE}' is malformed.") from None
-            return SaveSkillGapResult(
-                status="already_exists",
-                record_id=existing.record_id,
-                message=f"An identical entry already exists ({existing.record_id}); nothing was written.",
-                entry=existing,
-            )
+    with _PLAN_LOCK:
+        # 3. Duplicate check: never write the same entry twice
+        plan = _read_career_plan()
+        for raw in plan["entries"]:
+            if (
+                str(raw.get("candidate_id", "")).upper() == cid
+                and str(raw.get("job_id", "")).upper() == job.job_id
+                and str(raw.get("skill", "")).lower() == canonical_skill.lower()
+                and raw.get("gap_type") == gap_type
+            ):
+                try:
+                    existing = CareerPlanEntry.model_validate(raw)
+                except ValidationError:
+                    raise StorageError(f"Existing entry in '{CAREER_PLAN_FILE}' is malformed.") from None
+                return SaveSkillGapResult(
+                    status="already_exists",
+                    record_id=existing.record_id,
+                    message=f"An identical entry already exists ({existing.record_id}); nothing was written.",
+                    entry=existing,
+                )
 
-    # 4. Write
-    entry = CareerPlanEntry(
-        record_id=f"GAP-{uuid.uuid4().hex[:8].upper()}",
-        candidate_id=cid,
-        job_id=job.job_id,
-        skill=canonical_skill,
-        gap_type=gap_type,
-        rationale=rationale,
-        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    )
-    plan["entries"].append(entry.model_dump())
-    _write_career_plan(plan)
+        # 4. Write
+        entry = CareerPlanEntry(
+            record_id=f"GAP-{uuid.uuid4().hex[:8].upper()}",
+            candidate_id=cid,
+            job_id=job.job_id,
+            skill=canonical_skill,
+            gap_type=gap_type,
+            rationale=rationale,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        plan["entries"].append(entry.model_dump())
+        _write_career_plan(plan)
     return SaveSkillGapResult(
         status="saved",
         record_id=entry.record_id,
@@ -414,11 +419,15 @@ def investigate_job_fit(candidate_id: str, job_id: str, save_gap: bool = False) 
     candidate = find_candidate(candidate_id)
     cid = str(candidate["candidate_id"]).upper()
 
-    # 3. Compare
-    evidence = _evidence_index(candidate)
-    skills = [_assess_skill(r, "required", candidate, evidence) for r in job.required_skills]
-    skills += [_assess_skill(r, "preferred", candidate, evidence) for r in job.preferred_skills]
-    experience = _assess_experience(job, candidate)
+    # 3. Compare (a malformed profile is reported clearly instead of crashing)
+    try:
+        evidence = _evidence_index(candidate)
+        skills = [_assess_skill(r, "required", candidate, evidence) for r in job.required_skills]
+        skills += [_assess_skill(r, "preferred", candidate, evidence) for r in job.preferred_skills]
+        experience = _assess_experience(job, candidate)
+        limitations = _profile_limitations(candidate)
+    except (TypeError, ValueError, AttributeError) as e:
+        raise StorageError(f"Candidate record '{cid}' is malformed ({type(e).__name__}); nothing was saved.") from None
 
     required = [a for a in skills if a.requirement == "required"]
     points = sum(1.0 if a.label == "supported_match" else 0.5 if a.label == "possible_match" else 0.0 for a in required)
@@ -458,7 +467,7 @@ def investigate_job_fit(candidate_id: str, job_id: str, save_gap: bool = False) 
         label_counts=counts,
         skills=skills,
         experience=experience,
-        profile_limitations=_profile_limitations(candidate),
+        profile_limitations=limitations,
         next_steps=_next_steps(skills, experience),
         save_requested=save_gap,
         saved_entries=outcomes,
