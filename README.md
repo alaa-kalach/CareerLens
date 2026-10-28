@@ -56,18 +56,27 @@ The **coverage score** is the share of *required* skills with evidence (supporte
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[User] --> A["agent.py<br/>OpenAI Agents SDK<br/>(MCP Host)"]
-    A -->|"MCP client<br/>Streamable HTTP"| S["server/mcp_server.py<br/>FastMCP server"]
-    S --> D["get_job_requirements<br/>(Data)"]
-    S --> X["save_skill_gap<br/>(Action)"]
-    S --> O["investigate_job_fit<br/>(Orchestration)"]
-    O -.->|reuses| D
-    O -.->|reuses, only if save_gap| X
-    D --> J[(jobs.json)]
-    X --> P[(career_plan.json)]
-    O --> C[(candidates.json)]
+```
+ User
+   |
+   v
++------------------------------------------------------------------+
+| agent.py                                                         |
+| OpenAI Agents SDK agent  (MCP Host / Client)                     |
++------------------------------------------------------------------+
+   |  MCP over Streamable HTTP  (http://127.0.0.1:8000/mcp)
+   v
++------------------------------------------------------------------+
+| server/mcp_server.py  -  FastMCP server, exactly three tools     |
+|                                                                  |
+| get_job_requirements    save_skill_gap     investigate_job_fit   |
+|       (Data)              (Action)          (Orchestration)      |
++------------------------------------------------------------------+
+        |                      |                     |
+        |                      |       reuses the Data logic, then
+        |                      |       the Action logic only if save_gap=true
+        v                      v                     v
+  data/jobs.json      data/career_plan.json    data/candidates.json
 ```
 
 - **`agent.py`** is the MCP Host. An OpenAI Agents SDK `Agent` connects to the server with `MCPServerStreamableHttp` and routes each request to the right tool.
